@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: my-image-upload-bucket
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: my-sns-topic
+
+  SQSQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: my-sqs-queue
+
+  ImageProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ImageProcessor
+      Handler: image_processor.lambda_handler
+      Runtime: python3.8
+      Role: arn:aws:iam::************:role/LAMBDA_EXEC_ROLE
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref SNSTopic
+
+  NotificationHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: NotificationHandler
+      Handler: notification_handler.lambda_handler
+      Runtime: python3.8
+      Role: arn:aws:iam::************:role/LAMBDA_EXEC_ROLE
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Ref SQSQueue
+
+  TaskManagerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: TaskManager
+      Handler: task_manager.lambda_handler
+      Runtime: python3.8
+      Role: arn:aws:iam::***********:role/LAMBDA_EXEC_ROLE
+
+  S3Event:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt ImageProcessorFunction.Arn
+      Principal: 's3.amazonaws.com'
+      SourceArn: !GetAtt S3Bucket.Arn
+
+  S3BucketNotification:
+    Type: AWS::S3::BucketNotification
+    Properties:
+      Bucket: !Ref S3Bucket
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt ImageProcessorFunction.Arn
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SNSTopic
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: "sns:Publish"
+            Resource: !Ref SNSTopic
+            Condition:
+              ArnLike:
+                AWS:SourceArn: !GetAtt S3Bucket.Arn
+
+  LambdaSqsPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt NotificationHandlerFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sns.amazonaws.com'
+      SourceArn: !Ref SNSTopic
+
+Outputs:
+  S3BucketName:
+    Value: !Ref S3Bucket
+    Description: Name of the S3 bucket
+
+  SNSTopicArn:
+    Value: !Ref SNSTopic
+    Description: ARN of the SNS topic
+
+  SQSQueueUrl:
+    Value: !Ref SQSQueue
+    Description: URL of the SQS queue
